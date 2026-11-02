@@ -1,0 +1,15 @@
+# One-click deploy on Render (https://render.com) via "New > Blueprint".
+# Secrets marked sync:false are entered in the Render dashboard.
+services:
+  - type: web
+    name: callybre-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://callybre.com,https://www.callybre.com
