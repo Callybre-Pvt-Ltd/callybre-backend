@@ -52,7 +52,15 @@ Env vars needed on any host:
 4. Add env vars above → Deploy. You get e.g. `https://callybre-backend.onrender.com`.
    (Or use **New → Blueprint** — `render.yaml` is included.)
 
-> Free Render instances sleep after ~15 min idle; first request then takes ~30–50 s. Upgrade to a paid instance, or use Railway, to avoid that.
+> Free Render instances sleep after ~15 min idle; the first request then takes ~30–60 s.
+> The frontend already hides this from users (see `callybre-ui/src/lib/contactApi.js`):
+> it pings `/health` on page load to wake the server, shows success instantly, sends in the
+> background with retries, and queues unsent messages in localStorage. Messages carry an `id`
+> so retries never post twice.
+>
+> To stop it sleeping at all: point a free uptime monitor (UptimeRobot, cron-job.org) at
+> `https://<your-app>.onrender.com/health` every 10 min. One always-on service fits inside
+> Render's 750 free hours/month.
 
 ### Railway
 New Project → Deploy from GitHub → set root dir `callybre-backend` → add env vars → Settings → Generate Domain.

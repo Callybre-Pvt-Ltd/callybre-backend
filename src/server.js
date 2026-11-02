@@ -46,7 +46,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }))
 
 const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5, // 5 submissions per IP per 15 min
+  limit: 10, // per IP per 15 min (headroom for client retries during cold starts)
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { ok: false, error: 'Too many submissions. Please try again later.' },
@@ -64,9 +64,28 @@ function clean(body) {
   return out
 }
 
+// The frontend retries on timeouts (e.g. Render cold starts) and re-sends queued
+// messages on the next visit, each with the same `id`. Remember delivered ids for
+// a day so a retry never posts the same message to Slack twice.
+const DEDUPE_TTL_MS = 24 * 60 * 60 * 1000
+const delivered = new Map() // id -> timestamp
+const inFlight = new Map() // id -> Promise
+
+function pruneDelivered() {
+  const cutoff = Date.now() - DEDUPE_TTL_MS
+  for (const [id, t] of delivered) {
+    if (t < cutoff) delivered.delete(id)
+    else break // Map keeps insertion order, so the rest are newer
+  }
+}
+
 app.post('/api/contact', contactLimiter, async (req, res) => {
   // Honeypot: real users never fill this hidden field; bots do.
   if (req.body?.website) return res.json({ ok: true })
+
+  const id = typeof req.body?.id === 'string' ? req.body.id.slice(0, 64) : ''
+  pruneDelivered()
+  if (id && delivered.has(id)) return res.json({ ok: true, duplicate: true })
 
   const data = clean(req.body)
   const errors = {}
@@ -76,11 +95,20 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
   if (Object.keys(errors).length) return res.status(400).json({ ok: false, errors })
 
   try {
-    await sendToSlack(SLACK_WEBHOOK_URL, data)
+    // If the same id is already being sent (overlapping retry), wait for that send instead
+    let send = id && inFlight.get(id)
+    if (!send) {
+      send = sendToSlack(SLACK_WEBHOOK_URL, data)
+      if (id) inFlight.set(id, send)
+    }
+    await send
+    if (id) delivered.set(id, Date.now())
     res.json({ ok: true })
   } catch (err) {
     console.error(err)
     res.status(502).json({ ok: false, error: 'Could not send your message. Please try again.' })
+  } finally {
+    if (id) inFlight.delete(id)
   }
 })
 
